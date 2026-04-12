@@ -1,0 +1,25 @@
+name: Hello World
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: say-hello
+        run: echo "Hello World"
+
+      - name: Print Date
+        run: date
+
+      - name: Print Env Info
+        run: |
+          echo "Runner OS: $RUNNER_OS"
+          echo "GitHub Actor: $GITHUB_ACTOR"
+          echo "GitHub Repository: $GITHUB_REPOSITORY"
+          echo "GitHub Ref: $GITHUB_REF"
+          echo "GitHub SHA: $GITHUB_SHA"
