@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+    payslip-service:
+      build: .
+      ports:
+        - "8082:8082"
+      environment:
+        - SPRING_PROFILES_ACTIVE=prod
+        - API_SECURITY_KEY=my-docker-api-key
+      volumes:
+        - payslip-data:/app/payslips
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+
+volumes:
+    payslip-data:
