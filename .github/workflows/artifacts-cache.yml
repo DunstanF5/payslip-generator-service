@@ -68,8 +68,9 @@ jobs:
 
       - name: Verify JAR
         run: |
-          java -jar ./downloaded/*.jar --help || echo "JAR verification complete"
-          echo "JAR was: ${{ needs.build.outputs.jar-name }}"
+          echo "Verifying JAR: ${{ needs.build.outputs.jar-name }}"
+          jar tf ./downloaded/*.jar | head -20
+          echo "JAR verification complete"   
 
   cache-test:
     needs: build
