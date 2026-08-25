@@ -22,10 +22,10 @@ jobs:
           cache: 'maven'
 
       - name: Check for dependency updates
-        run: mvn versions:display-dependency-updates
+        run: mvn versions:display-dependency-updates -DprocessDependencyManagement=false
 
       - name: Check for plugin updates
-        run: mvn versions:display-plugin-updates
+        run: mvn versions:display-plugin-updates -DprocessDependencyManagement=false
 
   monthly-security-scan:
     if: github.event.schedule == '0 0 1 * *' || github.event_name == 'workflow_dispatch'
