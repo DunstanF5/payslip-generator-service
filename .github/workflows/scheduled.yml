@@ -1,0 +1,45 @@
+name: Scheduled Tasks
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+
+jobs:
+  weekly-dependecy-check:
+    if: github.event.schedule == '0 9 * * 1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Check for dependency updates
+        run: mvn versions:display-dependency-updates
+
+      - name: Check for plugin updates
+        run: mvn versions:display-plugin-updates
+
+  monthly-security-scan:
+    if: github.event.schedule == '0 0 1 * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Dependency analysis
+        run: mvn dependency:analyze
+
