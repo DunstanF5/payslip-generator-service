@@ -1,0 +1,73 @@
+name: Reusable Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      run-tests:
+        description: 'Whether to run tests'
+        required: false
+        type: boolean
+        default: true
+      upload-artifact:
+        description: 'Whether to upload JAR artifact'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      jar-name:
+        description: 'Name of the built JAR'
+        value: ${{ jobs.build.outputs.jar-name }}
+      version:
+        description: 'Project version'
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      jar-name: ${{ steps.build-info.outputs.jar-name }}
+      version: ${{ steps.build-info.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build
+        run: mvn clean compile
+
+      - name: Test
+        if: inputs.run-tests
+        run: mvn test
+
+      - name: Package
+        run: mvn package -DskipTests
+
+      - name: Get build info
+        id: build-info
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          JAR_NAME=$(ls target/*.jar | head -1 | xargs basename)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "jar-name=$JAR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        if: inputs.upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ steps.build-info.outputs.version }}
+          path: target/*.jar
+          retention-days: 7
+
+
+          

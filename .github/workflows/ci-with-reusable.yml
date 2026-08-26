@@ -1,0 +1,31 @@
+name: CI with Reusable Workflows
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+
+jobs:
+  build-java17:
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      java-version: '17'
+      run-tests: true
+
+  build-java21:
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      java-version: '21'
+      run-tests: true
+      upload-artifact: false
+
+  report:
+    needs: [build-java17, build-java21]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build summary
+        run: |
+          echo "Java 17 version: ${{ needs.build-java17.outputs.version }}" 
+          echo "Java 17 JAR: ${{ needs.build-java17.outputs.jar-name }}"
