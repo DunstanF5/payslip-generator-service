@@ -28,8 +28,7 @@ public class SecurityConfig {
                         .anyRequest().permitAll()
                 )
                 .addFilterBefore(new ApiKeyAuthFilter(apiKey), UsernamePasswordAuthenticationFilter.class);
-        System.out.println("Payslip downloaded for jobId: ");
-        //TODO
+
         return http.build();
     }
 
