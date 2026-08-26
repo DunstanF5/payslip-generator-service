@@ -24,20 +24,29 @@ jobs:
         run: |
           echo "## Code Review Checks" > review.md
           echo "" >> review.md
-          
+
+          FOUND=0
+
           if grep -rn "System.out.println" src/main/java/ 2>/dev/null; then
-          echo "🟡 **Warning**: Found System.out.println, use a logger instead" >> review.md
+            echo "🟡 **Warning**: Found System.out.println, use a logger instead" >> review.md
+            FOUND=1
           fi
-          
+
           if grep -rEn "(password|secret|apikey)\s*=\s*\"[^\"]+\"" src/ 2>/dev/null; then
-          echo "🔴 **Critical**: Possible hardcoded credentials" >> review.md
+            echo "🔴 **Critical**: Possible hardcoded credentials" >> review.md
+            FOUND=1
           fi
-          
+
           TODO_COUNT=$(grep -r "TODO" src/ 2>/dev/null | wc -l)
           if [ "$TODO_COUNT" -gt 0 ]; then
-          echo "🔵 **Info**: Found $TODO_COUNT TODO comments" >> review.md
+            echo "🔵 **Info**: Found $TODO_COUNT TODO comments" >> review.md
+            FOUND=1
           fi
-          
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "✅ No issues found" >> review.md
+          fi
+
           cat review.md
 
       - name: Post review comment
