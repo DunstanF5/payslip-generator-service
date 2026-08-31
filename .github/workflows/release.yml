@@ -1,0 +1,279 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - major
+          - minor
+        default: 'patch'
+      override-version:
+        description: 'Override version (optional, eg 1.0.0)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: dunstanf5/payslip-generator-service
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      next-snapshot: ${{ steps.compute.outputs.next-snapshot }}
+      previous-tag: ${{ steps.previous.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Read previous tag
+        id: previous
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREV_TAG"
+
+      - name: Compute next version
+        id: compute
+        run: |
+          CURRENT=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            RELEASE_VERSION=${CURRENT%-SNAPSHOT}
+          
+            if [ -n "${{ github.event.inputs.override-version }}" ]; then
+              NEW_VERSION="${{ github.event.inputs.override-version }}"
+            else
+              IFS='.' read -ra PARTS <<< "$RELEASE_VERSION"
+              MAJOR=${PARTS[0]}
+              MINOR=${PARTS[1]}
+              PATCH=${PARTS[2]}
+          
+              case "${{ github.event.inputs.release-type }}" in
+                major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH + 1)) ;;
+              esac
+
+              NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+            fi
+          
+            IFS='.' read -ra NV <<< "$NEW_VERSION"
+            NEXT_PATCH=$((NV[2] + 1))
+            NEXT_SNAPSHOT="${NV[0]}.${NV[1]}.$NEXT_PATCH-SNAPSHOT"
+          
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "next-snapshot=$NEXT_SNAPSHOT" >> $GITHUB_OUTPUT
+            echo "Releasing $NEW_VERSION (next dev: $NEXT_SNAPSHOT)"
+
+      - name: Bump pom.xml to release version
+        run: | 
+          mvn versions:set -DnewVersion=${{ steps.compute.outputs.version }} -DgenerateBackupPoms=false
+
+      - name: Commit version bump and tag
+        run: |
+          git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pom.xml
+            git commit -m "chore: release ${{ steps.compute.outputs.version }}"
+            git tag -a "v${{ steps.compute.outputs.version }}" -m "Release ${{ steps.compute.outputs.version }}"
+            git push origin master
+            git push origin "v${{ steps.compute.outputs.version }}"
+
+  build-and-test:
+    needs: prepare-release
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      java-version: '17'
+      run-tests: true
+      upload-artifact: true
+
+  docker-publish:
+    needs: [prepare-release, build-and-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.prepare-release.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.prepare-release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.prepare-release.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  github-release:
+    needs: [prepare-release, docker-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+          ref: v${{ needs.prepare-release.outputs.version }}
+
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: ./jar
+          merge-multiple: true
+
+      - name: Build changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          fromTag: ${{ needs.prepare-release.outputs.previous-tag }}
+          toTag: v${{ needs.prepare-release.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Github Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare-release.outputs.version }}
+          name: Release ${{ needs.prepare-release.outputs.version }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: ./jar/*.jar
+
+  deploy-staging-versioned:
+    needs: [prepare-release, docker-publish]
+    runs-on: ubuntu-latest
+    environment: 'staging'
+
+    steps:
+      - name: Loging to Azure
+        uses: azure/login
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy versioned image to staging
+        run: |
+          az containerapp update \
+          --name ${{ vars.CONTAINER_APP_NAME }} \
+          --resource-group payslip-tutorial-rg \
+          --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-release.outputs.version }}
+
+      - name: Smoke test staging
+        run: |
+          sleep 30
+            for i in {1..10}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ vars.APP_URL }}/actuator/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "Staging healthy on ${{ needs.prepare-release.outputs.version }}"
+                exit 0
+              fi
+              echo "Attempt $i: HTTP $STATUS"
+              sleep 15
+            done
+            exit 1
+
+  deploy-production:
+    needs: [prepare-release, deploy-staging-versioned]
+    runs-on: ubuntu-latest
+    environment: 'production'
+
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy versioned image to production
+        run: |
+          az containerapp update \
+              --name ${{ vars.CONTAINER_APP_NAME }} \
+              --resource-group payslip-tutorial-rg \
+              --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-release.outputs.version }}
+
+      - name: Smoke test production
+        run: |
+          sleep 30
+            for i in {1..10}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ vars.APP_URL }}/actuator/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "Production healthy on ${{ needs.prepare-release.outputs.version }}"
+                exit 0
+              fi
+              echo "Attempt $i: HTTP $STATUS"
+              sleep 15
+            done
+            exit 1
+
+  bump-snapshot:
+    needs: [prepare-release, deploy-production]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          token: '${{ secrets.GITHUB_TOKEN }}'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          git commit -m "chore: prepare for next development iteration"
+          git pull --rebase origin master
+          git push origin master
+        
+
+
+         
+          
+          
