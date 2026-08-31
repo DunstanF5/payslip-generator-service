@@ -188,7 +188,7 @@ jobs:
 
     steps:
       - name: Loging to Azure
-        uses: azure/login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
