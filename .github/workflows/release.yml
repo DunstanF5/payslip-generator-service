@@ -47,7 +47,7 @@ jobs:
       - name: Read previous tag
         id: previous
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          PREV_TAG=$(git tag --sort=-v:refname | head -1)
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
           echo "Previous tag: $PREV_TAG"
 
